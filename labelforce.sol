@@ -20,11 +20,10 @@ contract LabelForce {
     event NoImageAdded(uint imageID);
     event Voted(uint imageID, uint label, bool is_label, address voter);
     event ImageDone(uint imageID, uint resultLabel, uint numPro, address[] winners, address[] loosers, bool active);
+		event ImageNotDone();
 
     struct Image {
 				uint imgID;
-				uint numPro;
-				uint numCon;
         uint creationDate;
         bool active;
         Vote[] votes;
@@ -59,7 +58,9 @@ contract LabelForce {
     function newImage(uint _imageID) {
 				Yeo();
         if (voterShare.coinBalanceOf(msg.sender)>0) {
-					Image img = images[_imageID];
+					uint index = images.length++;
+					Image img = images[index];
+					img.imgID = _imageID;
 					img.creationDate = now;
 					img.active = true;
 					ImageAdded(_imageID);
@@ -69,8 +70,9 @@ contract LabelForce {
     }
 
     function vote(uint _imageID, uint _label, bool _is_label) returns (uint voteID){
+			Yeo();
 
-			if (voterShare.coinBalanceOf(msg.sender) > 0 && (_label <= 10 )) {
+			if (_label <= 10) {
 
 				Image img = images[_imageID];
 
@@ -163,6 +165,7 @@ contract LabelForce {
 						}
 					}
         }
+			ImageNotDone();
     }
 }
 
