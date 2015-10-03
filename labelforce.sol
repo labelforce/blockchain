@@ -4,91 +4,165 @@ contract token { mapping (address => uint) public coinBalanceOf;   function toke
 
 contract LabelForce {
 
-    uint public minimumQuorum;
-    uint public debatingPeriod;
+    uint public minVotes;
+	uint private minMajority;
     token public voterShare;
     address public founder;
-    Proposal[] public proposals;
-    uint public numProposals;
+    Image[] public images;
+    uint public numImages;
+	uint public numLabels;
 
-    event ProposalAdded(uint proposalID, address recipient, uint amount, bytes32 data, string description);
-    event Voted(uint proposalID, int position, address voter);
-    event ProposalTallied(uint proposalID, int result, uint quorum, bool active);
+	mapping (address => int) balances;
+	
 
-    struct Proposal {
-        address recipient;
-        uint amount;
-        bytes32 data;
-        string description;
+		event Yeo();
+    event ImageAdded(uint imageID);
+    event NoImageAdded(uint imageID);
+    event Voted(uint imageID, uint label, bool is_label, address voter);
+    event ImageDone(uint imageID, uint resultLabel, uint numPro, address[] winners, address[] loosers, bool active);
+
+    struct Image {
+				uint imgID;
+				uint numPro;
+				uint numCon;
         uint creationDate;
         bool active;
         Vote[] votes;
+				mapping (uint => uint) labels;
         mapping (address => bool) voted;
     }
 
     struct Vote {
-        int position;
+        uint label;
+				bool is_label;
         address voter;
     }
 
-    function LabelForce(token _voterShareAddress, uint _minimumQuorum, uint _debatingPeriod) {
+    function LabelForce(token _voterShareAddress, uint _minVotes, uint _numLabels) {
         founder = msg.sender;  
         voterShare = token(_voterShareAddress);
 
-        minimumQuorum = 10;
-        if (_minimumQuorum != 0) minimumQuorum = _minimumQuorum;
+				minVotes = 3;
+				if (_minVotes > 0) minVotes = _minVotes;
 
-        debatingPeriod = 30 days;
-        if (_debatingPeriod != 0) debatingPeriod = _debatingPeriod * 1 minutes;
+				numLabels = 10;
+				if (_numLabels > 0) numLabels = _numLabels;
+	
+				minMajority = (minVotes / 2) + 1;
+				
+				// Math.floor
+				minMajority = minMajority - (minMajority % 1);
+
     }
 
 
-    function newProposal(address _recipient, uint _amount, bytes32 _data, string _description) returns (uint proposalID) {
+    function newImage(uint _imageID) {
+				Yeo();
         if (voterShare.coinBalanceOf(msg.sender)>0) {
-            proposalID = proposals.length++;
-            Proposal p = proposals[proposalID];
-            p.recipient = _recipient;
-            p.amount = _amount;
-            p.data = _data;
-            p.description = _description;
-            p.creationDate = now;
-            p.active = true;
-            ProposalAdded(proposalID, _recipient, _amount, _data, _description);
-            numProposals = proposalID+1;
-        }
+					Image img = images[_imageID];
+					img.creationDate = now;
+					img.active = true;
+					ImageAdded(_imageID);
+        } else {
+					NoImageAdded(_imageID);
+				}
     }
 
-    function vote(uint _proposalID, int _position) returns (uint voteID){
-        if (voterShare.coinBalanceOf(msg.sender)>0 && (_position >= -1 || _position <= 1 )) {
-            Proposal p = proposals[_proposalID];
-            if (p.voted[msg.sender] == true) return;
-            voteID = p.votes.length++;
-            p.votes[voteID] = Vote({position: _position, voter: msg.sender});
-            p.voted[msg.sender] = true;
-            Voted(_proposalID,  _position, msg.sender);
-        }
+    function vote(uint _imageID, uint _label, bool _is_label) returns (uint voteID){
+
+			if (voterShare.coinBalanceOf(msg.sender) > 0 && (_label <= 10 )) {
+
+				Image img = images[_imageID];
+
+				// if user already voted, return
+				if (img.voted[msg.sender] == true) return;
+
+				voteID = img.votes.length++;
+
+				img.votes[voteID] = Vote({label: _label, is_label: _is_label, voter: msg.sender});
+				img.voted[msg.sender] = true;
+
+				img.labels[_label] += 1;
+
+				// fire event
+				Voted(_imageID, _label, _is_label, msg.sender);
+
+			}
+
     }
 
-    function executeProposal(uint _proposalID) returns (int result) {
-        Proposal p = proposals[_proposalID];
-        /* Check if debating period is over */
-        if (now > (p.creationDate + debatingPeriod) && p.active){   
-            uint quorum = 0;
-            /* tally the votes */
-            for (uint i = 0; i <  p.votes.length; ++i) {
-                Vote v = p.votes[i];
-                uint voteWeight = voterShare.coinBalanceOf(v.voter); 
-                quorum += voteWeight;
-                result += int(voteWeight) * v.position;
-            }
-            /* execute result */
-            if (quorum > minimumQuorum && result > 0 ) {
-                p.recipient.call.value(p.amount)(p.data);
-                p.active = false;
-            } else if (quorum > minimumQuorum && result < 0) {
-                p.active = false;
-            }
-            ProposalTallied(_proposalID, result, quorum, p.active);
+
+		function withdraw(uint amount) {
+        // Skip if someone tries to withdraw 0 or if they don't have enough Ether to make the withdrawal.
+
+        if (balances[msg.sender] < 0 || balances[msg.sender] < int(amount) || amount == 0) {
+          return;
+				}
+
+        balances[msg.sender] -= int(amount);
+        msg.sender.send(amount);
+    }
+
+    function checkImage(uint _imageID) returns (int result) {
+				Image img = images[_imageID];
+
+
+				result = 0;
+
+        if (img.active){   
+					for (uint i = 0; i <= numLabels; i++) {
+						if (img.labels[i] >= minMajority) {
+
+							// this is the winning label. let's get the winners and loosers
+
+							address[] _winners;
+							address[] _loosers;
+
+							for (uint j = 0; j < img.votes.length; j++) {
+								
+								Vote v = img.votes[j];
+                                uint index = 0;
+
+								if (v.label == j) {
+									if (v.is_label) {
+										index = _winners.length++;
+										_winners[index] = v.voter;
+									} else {
+										index = _loosers.length++;
+										_loosers[index] = v.voter;
+									}
+								}
+
+							}
+
+							// reward / penalty
+
+							for (j = 0; j < _winners.length; j++) {
+								address winner = _winners[j];
+
+								balances[winner] += 100;
+							}
+
+
+							for (j = 0; j < _loosers.length; j++) {
+							
+								address looser = _loosers[j];
+
+								balances[looser] -= 100;
+							}
+
+							result = 1;
+							img.active = false;
+
+
+							// event ImageDone(uint imageID, uint resultLabel, uint numPro, address[] winners, address[] loosers, bool active);
+
+							ImageDone(_imageID, i, img.labels[i], _winners, _loosers, false);
+							return;
+							
+						}
+					}
         }
     }
 }
+
