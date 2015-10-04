@@ -16,3 +16,5 @@ node index.js
 ```
 
 
+## License
+MIT
