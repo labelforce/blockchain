@@ -5,6 +5,24 @@ var fs = require('fs');
 var path = require('path');
 var repl = require('repl');
 var Q = require('q');
+var Firebase = require("firebase");
+var _ = require('lodash');
+
+
+var firebaseKey = 'eoyakpIFmf4LTm6JcUPElixc8ieeQujvDF7bCGNh';
+var base = new Firebase('https://boiling-heat-2521.firebaseio.com/');
+
+base.authWithCustomToken(firebaseKey, function(err, data) {
+	if (err) return console.log(err);
+	console.log(data);
+});
+
+
+var MIN_VOTES = 3;
+var MIN_MAJORITY = Math.floor((MIN_VOTES / 2) + 1);
+
+
+
 
 web3.setProvider(new web3.providers.HttpProvider('http://localhost:8101'));
 
@@ -28,6 +46,9 @@ Q.all([startToken(), startLabelforce()])
 
 function compiled() {
 	// lets do the shiat
+
+
+	addFirebase();// TODO: move that into compiled()
 
 	console.log('running compiled()');
 	try {
@@ -53,13 +74,13 @@ function compiled() {
 			gas: 100000000
 		});
 
-		console.log(status);
+		//console.log(status);
 
 		// img 1 is label 1
 		status = labelforce.vote.sendTransaction(0, 1, true, fromGas);
 		status = labelforce.vote.sendTransaction(0, 1, true, {from: eth.accounts[1], gas: 1000000});
 		status = labelforce.vote.sendTransaction(0, 1, true, {from: eth.accounts[2], gas: 1000000});
-		console.log(status);
+		//console.log(status);
 
 
 		labelforce.checkImage.sendTransaction(0, fromGas);
@@ -126,7 +147,7 @@ labelforce = labelforceContract.new(
 	    }, function(e, contract){
 			    if (typeof contract.address != 'undefined') {
 						resolve();
-					         console.log(e, contract);
+									 //console.log(e, contract);
 					         console.log('Contract mined! address: ' + contract.address + ' transactionHash: ' + contract.transactionHash);
 					    }
 			 })
@@ -163,14 +184,14 @@ function attachListeners(labelforce) {
 
 		if (err) return console.log(err);
 
-		console.log('tally tally ;)', res);
+		console.log('image done;)', res);
 	});
 
 	labelforce.ImageNotDone({}, '', function(err, res) {
 
 		if (err) return console.log(err);
 
-		console.log('image not done', res);
+		//console.log('image not done', res);
 	});
 }
 
@@ -217,6 +238,185 @@ function startToken() {
 			});
 	});
 }
+
+
+
+var images = [];
+
+var votes = [];
+
+
+var scores = [
+	{
+		exp: 10,
+		ether: 5
+	},
+	{
+		exp: 15,
+		ether: 8
+	},
+	{
+		exp: 5,
+		ether: 2
+	}
+];
+
+
+var score = base.child('score');
+
+score.set(scores);
+
+
+
+
+function addFirebase() {
+
+	var eth1 = eth.accounts[0];
+	var eth2 = eth.accounts[1];
+	var eth3 = eth.accounts[2];
+
+	var swipe = base.child('swiped');
+
+	//swipe.on('value', function(snapshot) {
+		//var val = snapshot.val();
+
+		//console.log('got value', val);
+	//});
+
+	swipe.on('child_added', function(snapshot, prevChildKey) {
+		var swipe = snapshot.val();
+		addImage(swipe.picture_id);
+		vote(swipe.user_id, swipe.picture_id, swipe.label, swipe.is_label);
+	});
+	
+
+}
+
+
+
+function addImage(imageID) {
+	var found = _.find(images, function(img) {
+		return img.id == imageID;
+	});
+
+	if (!found) {
+		images.push({ id: imageID, active: true });
+
+		labelforce.newImage.sendTransaction(imageID, {
+			from: eth.accounts[0],
+			gas: 1000000
+		});
+	}
+
+
+}
+
+
+function vote(userID, imageID, label, isLabel) {
+	userID = typeof userID === 'number' && !isNaN(userID) && userID >= 0 && userID <= 3 ? userID : 0;
+
+	var img = _.find(images, function(img) {
+		return img.id == imageID;
+	});
+
+	if (!img.active) return;
+
+	var index = images.indexOf(img);
+
+
+	votes.push({
+		userID: userID,
+		imageID: imageID,
+		label: label,
+		isLabel: isLabel
+	});
+
+	checkVotes(imageID);
+
+	
+	labelforce.vote.sendTransaction(index, label, isLabel, { from: eth.accounts[userID], gas: 1000000 });
+}
+
+
+
+function checkVotes(imageID) {
+	var labels = {};
+
+
+
+	var imageVotes = votes.filter(function(vote) {
+		return vote.imageID == imageID;
+	})
+	.forEach(function(vote) {
+
+		if (!vote.isLabel) return;
+
+		if (!labels[vote.label]) {
+			labels[vote.label] = 0;
+		}
+
+		labels[vote.label] += 1;
+	
+	});
+
+
+
+	var label = _.find(Object.keys(labels), function(label) {
+		return labels[label] >= MIN_MAJORITY;
+	});
+
+
+
+
+
+	if (label) {
+		// there is now a label for this image with more then MIN_MAJORITY positive votes
+
+		var img = _.find(images, function(img) {
+			return img.id == imageID;
+		});
+
+		img.active = false;
+
+		scores = updateScores(label, imageVotes);
+
+		// push to firebase
+		score.set(scores);
+
+		console.log('setted scores', scores);
+		
+	}
+
+}
+
+function updateScores(label, imageVotes) {
+	return scores.map(function(score, index) {
+
+		var expDelta = 0;
+		var etherDelta = 0;
+		
+		var vote = _.find(imageVotes, function(vot) {
+			return vot.userID == index;
+		});
+
+
+		if (vote && vote.label === label) {
+			if (vote.is_label) {
+				expDelta = 5;
+				etherDelta = 1;
+			} else {
+				expDelta = -5;
+				etherDelta = -1;
+			}
+		}
+
+		return {
+			exp: score.exp + expDelta,
+			ether: score.ether + etherDelta
+		};
+	});
+}
+
 
 var local = repl.start({
   prompt: 'Tims repl> ',
